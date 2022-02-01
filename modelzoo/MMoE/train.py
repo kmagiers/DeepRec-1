@@ -148,6 +148,11 @@ TOWERS = [
 '''
 MODEL CONFIG SPECIFICS
 '''
+def make_scope(name, bf16):
+    if(bf16):
+        return tf.variable_scope(name, reuse=tf.AUTO_REUSE).keep_weights()
+    else:
+        return tf.variable_scope(name, reuse=tf.AUTO_REUSE)
 
 def add_layer_summary(value, tag):
     tf.summary.scalar('%s/fraction_of_zero_values' % tag,
@@ -221,84 +226,72 @@ class MMOE():
         for key in TAG_COLUMN:
             self.feature[key] = tf.strings.split(self.feature[key], '|')
 
-        with tf.variable_scope('input_layer', reuse=tf.AUTO_REUSE).keep_weights():
+        with make_scope('input_layer', self.__bf16):
             input_emb = tf.feature_column.input_layer(self.feature,
                                                       self.__feature_column)
         
-        experts = []
-        for i in range(1, self.__num_experts + 1):
-            with tf.variable_scope(f'expert_{i}'):
-                expert_features = input_emb
-                if self.__bf16:
-                    expert_features = tf.cast(expert_features, dtype=tf.bfloat16)
-                    
-                for layer_id, num_hidden_units in enumerate(self.__expert_hidden_units):
-                    with tf.variable_scope(f'expert_{i}_layer_{layer_id}', reuse=tf.AUTO_REUSE) as expert_layer_scope:
-                        if self.__bf16:
-                            expert_layer_scope = expert_layer_scope.keep_weights()
+        with make_scope('MMOE', self.__bf16):
+            if self.__bf16:
+                input_emb = tf.cast(input_emb, dtype=tf.bfloat16)
+            experts = []
+            for i in range(1, self.__num_experts + 1):
+                with tf.variable_scope(f'expert_{i}'):
+                    expert_features = input_emb
 
-                        expert_features = tf.layers.dense(expert_features,
-                                                        units=num_hidden_units,
+                    for layer_id, num_hidden_units in enumerate(self.__expert_hidden_units):
+                        with tf.variable_scope(f'expert_{i}_layer_{layer_id}', reuse=tf.AUTO_REUSE) as expert_layer_scope:
+                            if self.__bf16:
+                                expert_layer_scope = expert_layer_scope.keep_weights()
+
+                            expert_features = tf.layers.dense(expert_features,
+                                                            units=num_hidden_units,
+                                                            activation=None,
+                                                            kernel_regularizer=self.__l2_regularization,
+                                                            name=f'{expert_layer_scope.name}/dense')
+                            expert_features = DNN_ACTIVATION(expert_features, 
+                                                            name=f'{expert_layer_scope.name}/act')               
+                            add_layer_summary(expert_features, expert_layer_scope.name)
+                    experts.append(expert_features)
+            experts_features = tf.stack(experts, axis=1)
+
+            towers=[]
+            for [tower_name, label_name, hidden_units] in self.__towers:
+                gate_input = input_emb
+                with tf.variable_scope(f'{tower_name}_gate', reuse=tf.AUTO_REUSE) as gate_scope:
+
+                    gate = tf.layers.dense(input_emb,
+                                        units=self.__num_experts,
+                                        kernel_regularizer=self.__l2_regularization,
+                                        name=f'{tower_name}_gate')
+                    gate = tf.nn.softmax(gate, axis=1)
+                    gate = tf.expand_dims(gate, -1)
+
+                with tf.variable_scope(tower_name):
+                    tower_input = expert_features
+
+                    tower_input = tf.multiply(experts_features, gate)
+                    tower_input = tf.reduce_sum(tower_input, axis=1)
+
+                    tower_features = tower_input
+                    for layer_id, num_hidden_units in enumerate(hidden_units):
+                        with tf.variable_scope(f'{tower_name}_layer_{layer_id}', reuse=tf.AUTO_REUSE) as tower_layer_scope:
+                            tower_features = tf.layers.dense(tower_features,
+                                                            units=num_hidden_units,
+                                                            kernel_regularizer=self.__l2_regularization,
+                                                            name=f'{tower_layer_scope.name}/dense')
+                            tower_features = DNN_ACTIVATION(tower_features,
+                                                            name=f'{tower_layer_scope.name}/act')
+                            add_layer_summary(tower_features, tower_layer_scope.name)
+                    final_tower_predict = tf.layers.dense(inputs=tower_features,
+                                                        units=1,
                                                         activation=None,
                                                         kernel_regularizer=self.__l2_regularization,
-                                                        name=f'{expert_layer_scope.name}/dense')
-                        expert_features = DNN_ACTIVATION(expert_features, 
-                                                        name=f'{expert_layer_scope.name}/act')               
-                        add_layer_summary(expert_features, expert_layer_scope.name)
-                
-                if self.__bf16:
-                    expert_features = tf.cast(expert_features, dtype=tf.float32)
-                    
-                experts.append(expert_features)
-        experts_features = tf.stack(experts, axis=1)
-
-        towers=[]
-        for [tower_name, label_name, hidden_units] in self.__towers:
-            gate_input = input_emb
+                                                        name=f'{tower_name}_output')
+                    final_tower_predict = tf.math.sigmoid(final_tower_predict, f'{tower_name}_output')
+                    towers.append(final_tower_predict)
+            tower_stack = tf.stack(towers,axis=1)
             if self.__bf16:
-                gate_input = tf.cast(gate_input, dtype=tf.bfloat16)
-            with tf.variable_scope(f'{tower_name}_gate', reuse=tf.AUTO_REUSE) as gate_scope:
-                if self.__bf16:
-                    gate_scope = gate_scope.keep_weights()
-
-                gate = tf.layers.dense(input_emb,
-                                    units=self.__num_experts,
-                                    kernel_regularizer=self.__l2_regularization,
-                                    name=f'{tower_name}_gate')
-                gate = tf.nn.softmax(gate, axis=1)
-                gate = tf.expand_dims(gate, -1)
-            if self.__bf16:
-                gate = tf.cast(gate, dtype=tf.float32)
-                    
-            with tf.variable_scope(tower_name):
-                tower_input = expert_features
-                if self.__bf16:
-                    tower_input = tf.cast(tower_input, dtype=tf.bfloat16)
-                tower_input = tf.multiply(experts_features, gate)
-                tower_input = tf.reduce_sum(tower_input, axis=1)
-
-                tower_features = tower_input
-                for layer_id, num_hidden_units in enumerate(hidden_units):
-                    with tf.variable_scope(f'{tower_name}_layer_{layer_id}', reuse=tf.AUTO_REUSE) as tower_layer_scope:
-                        if self.__bf16:
-                            tower_layer_scope = tower_layer_scope.keep_weights()
-                        tower_features = tf.layers.dense(tower_features,
-                                                        units=num_hidden_units,
-                                                        kernel_regularizer=self.__l2_regularization,
-                                                        name=f'{tower_layer_scope.name}/dense')
-                        tower_features = DNN_ACTIVATION(tower_features,
-                                                        name=f'{tower_layer_scope.name}/act')
-                        add_layer_summary(tower_features, tower_layer_scope.name)
-                final_tower_predict = tf.layers.dense(inputs=tower_features,
-                                                    units=1,
-                                                    activation=None,
-                                                    kernel_regularizer=self.__l2_regularization,
-                                                    name=f'{tower_name}_output')
-                final_tower_predict = tf.math.sigmoid(final_tower_predict, f'{tower_name}_output')
-                if self.__bf16:
-                    final_tower_predict = tf.cast(final_tower_predict, dtype=tf.float32)
-                towers.append(final_tower_predict)
-        tower_stack = tf.stack(towers,axis=1)
+                tower_stack = tf.cast(expert_features, dtype=tf.float32)
 
         return tower_stack
 
