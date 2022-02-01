@@ -240,9 +240,6 @@ class MMOE():
 
                     for layer_id, num_hidden_units in enumerate(self.__expert_hidden_units):
                         with tf.variable_scope(f'expert_{i}_layer_{layer_id}', reuse=tf.AUTO_REUSE) as expert_layer_scope:
-                            if self.__bf16:
-                                expert_layer_scope = expert_layer_scope.keep_weights()
-
                             expert_features = tf.layers.dense(expert_features,
                                                             units=num_hidden_units,
                                                             activation=None,
@@ -291,7 +288,7 @@ class MMOE():
                     towers.append(final_tower_predict)
             tower_stack = tf.stack(towers,axis=1)
             if self.__bf16:
-                tower_stack = tf.cast(expert_features, dtype=tf.float32)
+                tower_stack = tf.cast(tower_stack, dtype=tf.float32)
 
         return tower_stack
 
