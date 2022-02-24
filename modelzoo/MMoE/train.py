@@ -201,7 +201,7 @@ class MMOE():
         self.model = self.__build_model()
         self.train_op, self.loss = self.compute_loss()
 
-        self.acc, self.acc_op = tf.metrics.accuracy(labels=self.label, predictions=self.model)
+        self.acc, self.acc_op = tf.metrics.accuracy(labels=self.label, predictions=tf.round(self.model))
         self.auc, self.auc_op = tf.metrics.auc(labels=self.label, predictions=self.model, num_thresholds=1000)
 
         tf.summary.scalar('eval_acc', self.acc)
