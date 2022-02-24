@@ -199,13 +199,14 @@ class MMOE():
         self.label = input[1]
 
         self.model = self.__build_model()
-        self.train_op, self.loss = self.compute_loss()
 
-        self.acc, self.acc_op = tf.metrics.accuracy(labels=self.label, predictions=tf.round(self.model))
-        self.auc, self.auc_op = tf.metrics.auc(labels=self.label, predictions=self.model, num_thresholds=1000)
+        with tf.name_scope('head'):
+            self.train_op, self.loss = self.compute_loss()
+            self.acc, self.acc_op = tf.metrics.accuracy(labels=self.label, predictions=tf.round(self.model))
+            self.auc, self.auc_op = tf.metrics.auc(labels=self.label, predictions=self.model, num_thresholds=1000)
 
-        tf.summary.scalar('eval_acc', self.acc)
-        tf.summary.scalar('eval_auc', self.auc)
+            tf.summary.scalar('eval_acc', self.acc)
+            tf.summary.scalar('eval_auc', self.auc)
 
     def compute_loss(self):
         bce_loss_func = tf.keras.losses.BinaryCrossentropy()
