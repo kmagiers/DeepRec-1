@@ -119,7 +119,38 @@ model:                     ┌────┴────┐                    
 TBD
 
 #### Performance Result
-TBD
+<table>
+    <tr>
+        <td colspan="1"></td>
+        <td>Framework</td>
+        <td>DType</td>
+        <td>Accuracy</td>
+        <td>AUC</td>
+        <td>Globalsetp/Sec</td>
+    </tr>
+    <tr>
+        <td rowspan="3">MMOE</td>
+        <td>Community TensorFlow</td>
+        <td>FP32</td>
+        <td>0.97378</td>
+        <td>0.74330</td>
+        <td>70.4714 (baseline)</td>
+    </tr>
+    <tr>
+        <td>DeepRec w/ oneDNN</td>
+        <td>FP32</td>
+        <td>0.97378</td>
+        <td>0.74426</td>
+        <td>92.1696 (+1.30x)</td>
+    </tr>
+    <tr>
+        <td>DeepRec w/ oneDNN</td>
+        <td>FP32+BF16</td>
+        <td>0.97378</td>
+        <td>0.74607</td>
+        <td>102.4703 (+1.45x)</td>
+    </tr>
+</table>
 
 - Community TensorFlow version is v1.15.5.
 
